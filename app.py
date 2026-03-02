@@ -10,117 +10,8 @@ import PyPDF2
 import docx
 from fpdf import FPDF
 
-# --- 1. CONFIGURATION ---
-os.environ["GEMINI_API_KEY"] = "AIzaSyAD7vinOWSWnDTvYkV0oCfUad9PNO2JAmk"
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-
-# --- 2. ENTERPRISE DATA SCHEMA ---
-class BriefAnalysis(BaseModel):
-    brief_quality_score: int
-    executive_summary: str
-    action_plan: List[str]
-    identified_gaps: List[str]
-    required_agents: List[str] 
-    mnc_project_timeline: List[str] 
-    compliance_brand_assessment: str 
-    client_followup_questions: List[str]
-
-# --- 3. CORE AI LOGIC ---
-def extract_text_from_file(file_path: str) -> str:
-    ext = file_path.lower().split('.')[-1]
-    text = ""
-    if ext == 'txt':
-        with open(file_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-    elif ext == 'pdf':
-        with open(file_path, 'rb') as f:
-            reader = PyPDF2.PdfReader(f)
-            text = " ".join([page.extract_text() for page in reader.pages if page.extract_text() or ""])
-    elif ext == 'docx':
-        doc = docx.Document(file_path)
-        text = " ".join([para.text for para in doc.paragraphs])
-    return text
-
-def process_brief_with_aiddy(raw_text: str):
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction="""You are 'Brief Aiddy', the Lead Intake & Orchestration AI for an enterprise digital marketing platform. 
-        Analyze the client brief and output a strict JSON structure.
-        
-        1. Score quality (0-100) and write an executive summary.
-        2. Detail a plan of action and identify critical missing information (gaps).
-        3. List required downstream agents ONLY from this exact list: [GEOAiddy, MediaAiddy, Paid Media Aiddy, Social listening Aiddy, Content Aiddy, Design Aiddy].
-        4. Create an 'mnc_project_timeline': Structure this for a large enterprise (e.g., Include phases like Stakeholder Alignment, Legal/Compliance Review, Sprint Execution, QA, and Deployment).
-        5. Provide a 'compliance_brand_assessment': Briefly flag any potential regulatory, brand safety, or legal risks based on the brief's industry or requests.
-        6. Generate polite client follow-up questions to resolve the gaps."""
-    )
-
-    prompt = f"Analyze the following client brief:\n\n{raw_text}"
-
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(
-            response_mime_type="application/json",
-            response_schema=BriefAnalysis,
-            temperature=0.2, 
-        ),
-    )
-    return json.loads(response.text)
-
-# --- 4. BULLETPROOF PDF GENERATION LOGIC ---
-def generate_pdf_report(result, email_body):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    
-    def clean_text(text):
-        # Replace smart quotes that often cause encoding crashes
-        text = str(text).replace('”', '"').replace('“', '"').replace('’', "'").replace('–', '-')
-        return text.encode('latin-1', 'replace').decode('latin-1')
-
-    # Custom writer that manually slices lines to prevent fpdf crashes
-    def safe_write(text):
-        text_str = clean_text(text)
-        if not text_str.strip():
-            pdf.ln(7)
-            return
-        # Force a hard break at 85 chars, no matter what
-        lines = textwrap.wrap(text_str, width=85, break_long_words=True)
-        for line in lines:
-            pdf.cell(0, 7, line, ln=True)
-
-    pdf.set_font("Helvetica", style="B", size=16)
-    pdf.cell(0, 10, "Brief Aiddy - Enterprise Intelligence Report", ln=True, align="C")
-    pdf.ln(5)
-
-    sections = [
-        ("Brief Readiness Score", f"{result.get('brief_quality_score', 0)}/100"),
-        ("Executive Summary", result.get("executive_summary", "N/A")),
-        ("Action Plan", result.get("action_plan", [])),
-        ("Identified Gaps", result.get("identified_gaps", [])),
-        ("Required Specialized Agents", result.get("required_agents", [])),
-        ("Enterprise Project Timeline", result.get("mnc_project_timeline", [])),
-        ("Compliance & Brand Assessment", result.get("compliance_brand_assessment", "N/A")),
-        ("Drafted Client Communication", email_body)
-    ]
-
-    for title, content in sections:
-        pdf.set_font("Helvetica", style="B", size=12)
-        pdf.cell(0, 10, clean_text(title), ln=True)
-        pdf.set_font("Helvetica", size=11)
-        
-        if isinstance(content, list):
-            for item in content:
-                safe_write(f"- {item}")
-        else:
-            # Handle AI outputs that include line breaks natively
-            for para in str(content).split('\n'):
-                safe_write(para)
-        pdf.ln(5)
-
-    return bytes(pdf.output())
-
-# --- 5. VIBRANT PROFESSIONAL UI & STYLING ---
+# --- 1. VIBRANT PROFESSIONAL UI & STYLING ---
+# We move the page config to the very top to prevent Streamlit errors
 st.set_page_config(page_title="Brief Aiddy | Orchestration", layout="wide")
 
 st.markdown("""
@@ -176,6 +67,133 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- 2. SECURE CONFIGURATION ---
+api_key = ""
+
+# First, try to get the key from Streamlit's hidden secrets vault
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    pass
+
+# If the vault is empty (like in your Codespace), ask for it safely in the sidebar
+if not api_key:
+    with st.sidebar:
+        st.warning("⚠️ API Key not found in secrets.")
+        api_key = st.text_input("Paste your Gemini API Key here to continue:", type="password")
+        st.caption("Get your free key from Google AI Studio. This key is not saved and disappears when you refresh.")
+
+# Stop the app from running if there is no key at all
+if not api_key:
+    st.info("👈 Please enter your API key in the sidebar to start Brief Aiddy.")
+    st.stop()
+
+# Configure the AI with the safely retrieved key
+genai.configure(api_key=api_key)
+
+# --- 3. ENTERPRISE DATA SCHEMA ---
+class BriefAnalysis(BaseModel):
+    brief_quality_score: int
+    executive_summary: str
+    action_plan: List[str]
+    identified_gaps: List[str]
+    required_agents: List[str] 
+    mnc_project_timeline: List[str] 
+    compliance_brand_assessment: str 
+    client_followup_questions: List[str]
+
+# --- 4. CORE AI LOGIC ---
+def extract_text_from_file(file_path: str) -> str:
+    ext = file_path.lower().split('.')[-1]
+    text = ""
+    if ext == 'txt':
+        with open(file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+    elif ext == 'pdf':
+        with open(file_path, 'rb') as f:
+            reader = PyPDF2.PdfReader(f)
+            text = " ".join([page.extract_text() for page in reader.pages if page.extract_text() or ""])
+    elif ext == 'docx':
+        doc = docx.Document(file_path)
+        text = " ".join([para.text for para in doc.paragraphs])
+    return text
+
+def process_brief_with_aiddy(raw_text: str):
+    model = genai.GenerativeModel(
+        model_name="gemini-2.5-flash",
+        system_instruction="""You are 'Brief Aiddy', the Lead Intake & Orchestration AI for an enterprise digital marketing platform. 
+        Analyze the client brief and output a strict JSON structure.
+        
+        1. Score quality (0-100) and write an executive summary.
+        2. Detail a plan of action and identify critical missing information (gaps).
+        3. List required downstream agents ONLY from this exact list: [GEOAiddy, MediaAiddy, Paid Media Aiddy, Social listening Aiddy, Content Aiddy, Design Aiddy].
+        4. Create an 'mnc_project_timeline': Structure this for a large enterprise (e.g., Include phases like Stakeholder Alignment, Legal/Compliance Review, Sprint Execution, QA, and Deployment).
+        5. Provide a 'compliance_brand_assessment': Briefly flag any potential regulatory, brand safety, or legal risks based on the brief's industry or requests.
+        6. Generate polite client follow-up questions to resolve the gaps."""
+    )
+
+    prompt = f"Analyze the following client brief:\n\n{raw_text}"
+
+    response = model.generate_content(
+        prompt,
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=BriefAnalysis,
+            temperature=0.2, 
+        ),
+    )
+    return json.loads(response.text)
+
+# --- 5. BULLETPROOF PDF GENERATION LOGIC ---
+def generate_pdf_report(result, email_body):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    def clean_text(text):
+        text = str(text).replace('”', '"').replace('“', '"').replace('’', "'").replace('–', '-')
+        return text.encode('latin-1', 'replace').decode('latin-1')
+
+    def safe_write(text):
+        text_str = clean_text(text)
+        if not text_str.strip():
+            pdf.ln(7)
+            return
+        lines = textwrap.wrap(text_str, width=85, break_long_words=True)
+        for line in lines:
+            pdf.cell(0, 7, line, ln=True)
+
+    pdf.set_font("Helvetica", style="B", size=16)
+    pdf.cell(0, 10, "Brief Aiddy - Enterprise Intelligence Report", ln=True, align="C")
+    pdf.ln(5)
+
+    sections = [
+        ("Brief Readiness Score", f"{result.get('brief_quality_score', 0)}/100"),
+        ("Executive Summary", result.get("executive_summary", "N/A")),
+        ("Action Plan", result.get("action_plan", [])),
+        ("Identified Gaps", result.get("identified_gaps", [])),
+        ("Required Specialized Agents", result.get("required_agents", [])),
+        ("Enterprise Project Timeline", result.get("mnc_project_timeline", [])),
+        ("Compliance & Brand Assessment", result.get("compliance_brand_assessment", "N/A")),
+        ("Drafted Client Communication", email_body)
+    ]
+
+    for title, content in sections:
+        pdf.set_font("Helvetica", style="B", size=12)
+        pdf.cell(0, 10, clean_text(title), ln=True)
+        pdf.set_font("Helvetica", size=11)
+        
+        if isinstance(content, list):
+            for item in content:
+                safe_write(f"- {item}")
+        else:
+            for para in str(content).split('\n'):
+                safe_write(para)
+        pdf.ln(5)
+
+    return bytes(pdf.output())
+
+# --- 6. MAIN APP DASHBOARD ---
 st.markdown("<h1 style='font-size: 3.5rem; color: #0F172A; margin-bottom: 0px; padding-bottom: 0px;'>Brief Aiddy <span style='color: #3B82F6;'>.</span></h1>", unsafe_allow_html=True)
 st.markdown("<p style='font-size: 1.25rem; color: #64748B; margin-top: 5px; font-weight: 500;'>Intelligent Intake, Compliance Guardian & Agent Orchestration</p>", unsafe_allow_html=True)
 st.markdown("<hr style='margin-top: 10px; margin-bottom: 30px; border-color: #E2E8F0;'>", unsafe_allow_html=True)
@@ -285,7 +303,6 @@ with col_output:
 
                 st.markdown("<hr style='margin-top: 30px; margin-bottom: 20px;'>", unsafe_allow_html=True)
                 
-                # The stabilized PDF generator
                 pdf_bytes = generate_pdf_report(result, email_body)
                 st.download_button(
                     label="📥 Download Enterprise Report (PDF)",

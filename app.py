@@ -240,7 +240,7 @@ with col_output:
             st.markdown("<div class='feature-card'>🎯 Action Plan & Gaps</div>", unsafe_allow_html=True)
             st.markdown("<div class='feature-card'>🤖 Agent Routing</div>", unsafe_allow_html=True)
         with cols[1]:
-            st.markdown("<div class='feature-card'>⏱️ MNC Project Timeline</div>", unsafe_allow_html=True)
+            st.markdown("<div class='feature-card'>⏱️ Project Timeline</div>", unsafe_allow_html=True)
             st.markdown("<div class='feature-card'>🛡️ Compliance Guardian</div>", unsafe_allow_html=True)
 
     if analyze_button and raw_brief_text:
